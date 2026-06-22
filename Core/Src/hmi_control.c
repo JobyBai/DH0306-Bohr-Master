@@ -1,0 +1,1100 @@
+/*
+ * screen.c
+ *
+ *  Created on: Aug 22, 2025
+ *      Author: dhyf02
+ */
+
+#include "hmi_control.h"
+#include "math.h"
+#include "usart.h"
+#include "gpio.h"
+#include "cmd_queue.h"
+#include "cmd_process.h"
+#include "esp32.h"
+#include "string.h"
+#include "sensor_control.h"
+#include "sfud.h"
+#include "ble_table_upload.h"
+#include "hmi_driver.h"
+
+
+uint8_t device_id[8] = { 0x42, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 }; //设备ID
+// wifi 相关参数
+uint8_t wlan_sid[60] = { 0 }; //wifi SSID
+uint8_t wlan_password[60] = { 0 }; //wifi 密码
+uint8_t wlan_service_IP[60] = { 0 }; //服务端IP
+uint8_t wlan_service_port[60] = { 0 }; //服务端端口
+uint8_t wifi_state_t[2] = { 0, 1 }; //wifi状态 0-未连接 1-已连接
+uint8_t protocol_type[2] = { 0, 1 }; //TCP-1    UDP-0;
+uint8_t wifi_connect_state = 0;// wifi连接状态 0未连接 1连接
+
+// 蓝牙 相关参数
+uint8_t ble_state_t[2] = { 0, 1 }; //蓝牙状态 0-未连接 1-已连接
+uint8_t ble_name[60] = { 0 }; //蓝牙名称
+uint8_t ble_mac[60] = { 0 }; //蓝牙MAC
+uint8_t ble_paring[60] = { 0 }; //蓝牙配对码
+uint8_t ble_transfer_cancel = 0;// 取消蓝牙传输, 1允许传输 2不允许传输
+
+// power命令集
+uint8_t demagnetize_msg[6] = { 0xAA, 0x08, 0x00, 0x00, 0x00, 0x55 }; // 继电器位置：消磁
+// uint8_t square_wave_open_msg[6] = { 0xAA, 0x0B, 0x00, 0x00, 0x00, 0x55 }; // 开启方波
+// uint8_t square_wave_close_msg[6] = { 0xAA, 0x0C, 0x00, 0x00, 0x00, 0x55 }; // 关闭方波
+// uint8_t square_wave_amplitude_msg[6] = { 0xAA, 0x0A, 0x01, 0x41, 0x00, 0x55 }; // 设置方波幅值,1.65 单位：V
+uint8_t demagnetize_open_msg[6] = { 0xAA, 0x0E, 0x00, 0x00, 0x00, 0x55 }; // 继电器位置：消磁 开启消磁
+uint8_t current_msg[6] = { 0xAA, 0x09, 0x00, 0x00, 0x00, 0x55 }; // 继电器位置：恒流源
+uint8_t target_current_msg[6] = { 0xAA, 0x6E, 0x00, 0x00, 0x00, 0x55 }; // 设置目标电流
+uint8_t motor_cycle_msg[6] = { 0xAA, 0x1D, 0x00, 0x00, 0x00, 0x55 }; // 设置电机周期
+uint8_t motor_open_msg[6] = { 0xAA, 0x14, 0x00, 0x00, 0x00, 0x55 }; // 电机开启
+uint8_t motor_close_msg[6] = { 0xAA, 0x15, 0x00, 0x00, 0x00, 0x55 }; // 电机关闭
+
+// 阻尼1系数
+uint16_t damping1 = 1;
+// 阻尼2系数
+uint16_t damping2 = 2;
+// 阻尼3系数
+uint16_t damping3 = 3;
+// 阻尼档位
+uint8_t damping_num = 1;
+// 连接方式 0x04: wifi 0x07: 蓝牙
+uint8_t connect_type = 0x04;
+// 当前页面
+uint16_t current_screen = 0x0000;
+
+// 步进系数
+const float step_table[] = { 0.001f, 0.01f, 0.1f, 1.0f };
+uint8_t step_index = 0; // 默认 0.001
+float motor_cycle = 1.250f; //电机周期 s
+
+int8_t line_flag = -1; // 选中行数
+uint8_t index_filtered = 0;       // 筛选结果数量
+
+void ProcessMessage(PCTRL_MSG msg, uint16_t size) {
+	uint8_t cmd_type = msg->cmd_type;                                     //命令类型
+	uint8_t ctrl_msg = msg->ctrl_msg;                                   //消息控制类型
+	uint8_t control_type = msg->control_type;                             //控件类型
+	uint16_t screen_id = PTR2U16(&msg->screen_id);                        //屏幕ID
+	uint16_t control_id = PTR2U16(&msg->control_id);                      //控件ID
+	uint32_t value = PTR2U32(msg->param);                                  //参数值
+	uint16_t value1 = PTR2U16(msg->param);
+
+	switch (cmd_type) {
+	case NOTIFY_TOUCH_PRESS:                                            //触摸按下通知
+	case NOTIFY_TOUCH_RELEASE:                                          //触摸释放通知
+		// NotifyTouchXY(cmd_buffer[1],PTR2U16(cmd_buffer+2),PTR2U16(cmd_buffer+4));
+		break;
+	case NOTIFY_WRITE_FLASH_OK:                                       //写FLASH成功
+		// NotifyWriteFlash(1);
+		break;
+	case NOTIFY_WRITE_FLASH_FAILD:                                    //写FLASH失败
+		//  NotifyWriteFlash(0);
+		break;
+	case NOTIFY_READ_FLASH_OK:                                       //读取FLASH成功
+		//  NotifyReadFlash(1,cmd_buffer+2,size-6);                                     //去除帧头帧尾
+		break;
+	case NOTIFY_READ_FLASH_FAILD:                                    //读取FLASH失败
+		//NotifyReadFlash(0,0,0);
+		break;
+	case NOTIFY_READ_RTC:                                              //读取RTC时间
+		//NotifyReadRTC(cmd_buffer[2],cmd_buffer[3],cmd_buffer[4],cmd_buffer[5],cmd_buffer[6],cmd_buffer[7],cmd_buffer[8]);
+		break;
+	case NOTIFY_CONTROL: {
+		if (ctrl_msg == MSG_GET_CURRENT_SCREEN)                       //屏幕ID变化通知
+		{
+			NotifyScreen(screen_id);                                  //通知当前屏幕变化
+		} else {
+			switch (control_type) {
+			case kCtrlknob:
+				Notifyknob(screen_id, control_id, value1);
+				break;
+			case kCtrlButton:                                             //按钮控件
+				NotifyButton(screen_id, control_id, msg->param[1]);
+				break;
+			case kCtrlText:                                               //文本控件
+				NotifyText(screen_id, control_id, (const char*) msg->param);
+				break;
+			case kCtrlProgress:                                          //进度条控件
+				NotifyProgress(screen_id, control_id, value);
+				break;
+			case kCtrlSlider:                                             //滑块控件
+				NotifySlider(screen_id, control_id, value);
+				break;
+			case kCtrlMeter:                                              //仪表控件
+				NotifyMeter(screen_id, control_id, value);
+				break;
+			case kCtrlMenu:                                               //菜单控件
+				NotifyMenu(screen_id, control_id, msg->param[0], msg->param[1]);
+				break;
+			case kCtrlSelector:                                          //选择器控件
+				NotifySelector(screen_id, control_id, msg->param[0]);
+				break;
+			case kCtrlDropList:                                         //下拉列表控件
+				NotifySelector(screen_id, control_id, value);
+				break;
+			case kCtrlRTC:                                              //实时时间控件
+				NotifyTimer(screen_id, control_id);
+				break;
+			case kCtrlRecord:										// 记录按钮点击通知
+				NotifyRecord(screen_id, control_id, msg->param[1]);
+
+			default:
+				break;
+			}
+		}
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+uint8_t current_screen_id = 0;
+
+/*!
+ *  \brief  当前屏幕变化通知
+ *  \details  当前屏幕内容(通过GetScreen)或执行此函数时触发
+ *  \param screen_id 当前屏幕ID
+ */
+void NotifyScreen(uint16_t screen_id) {
+
+}
+
+/*!
+ *  \brief  触摸屏坐标响应
+ *  \param press 1为按下，3为释放
+ *  \param x x坐标
+ *  \param y y坐标
+ */
+void NotifyTouchXY(uint8_t press, uint16_t x, uint16_t y) {
+}
+
+/*!
+ *  \brief  旋钮控件通知
+ *  \details  通过GetControlValue时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param value 值
+ */
+
+void Notifyknob(uint16_t screen_id, uint16_t control_id, uint16_t value) {
+
+}
+
+/*!
+ *  \brief  更新界面
+ */
+void UpdateUI() {
+	// wifi参数
+	SetTextValue(4, 3, wlan_sid);
+	SetTextValue(4, 4, wlan_password);
+	SetTextValue(4, 5, wlan_service_IP);
+	SetTextValue(4, 6, wlan_service_port);
+	// 阻尼参数
+	SetTextInt32(6, 3, damping1, 0, 1);
+	SetTextInt32(6, 4, damping2, 0, 1);
+	SetTextInt32(6, 5, damping3, 0, 1);
+	// 受迫振荡相关
+	SetTextFloat(3, 0x0B, motor_cycle, 3, 1);
+	// 蓝牙参数
+	SetTextValue(7, 3, ble_name);
+	SetTextValue(7, 4, ble_mac);
+	SetTextValue(7, 5, ble_paring);
+}
+
+/*!
+ *  \brief  按钮控件通知
+ *  \details  获取按钮状态变化(通过GetControlValue)时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param state 按钮状态，0释放1按下
+ */
+void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
+	if (screen_id == 0x0000)                                              // 首页
+			{
+		switch (control_id) {
+		case 0x01: // 自由震荡
+			if (state == 0x01) {
+				page_flag = 1;
+				Sensor_Control_Start_Mode1();
+
+				// 切换继电器位置：消磁
+				HAL_UART_Transmit(&huart4, demagnetize_msg, 6, 100);
+			}
+			break;
+		case 0x02: // 阻尼振荡
+			if (state == 0x01) {
+				page_flag = 2;
+				Sensor_Control_Start_Mode1();
+
+				// 切换继电器位置：恒流源
+				HAL_UART_Transmit(&huart4, current_msg, 6, 100);
+			}
+			break;
+		case 0x03: // 受迫振荡
+			if (state == 0x01) {
+				page_flag = 3;
+				Sensor_Control_Start_Mode1();
+
+				// 切换继电器位置：恒流源
+				HAL_UART_Transmit(&huart4, current_msg, 6, 100);
+			}
+			break;
+		case 0x04: // 链接设置： 蓝牙 7 或 wifi 4
+			if (state == 0x01) {
+				// if (connect_type == 0x04) {// wifi
+					
+				// } else if (connect_type == 0x07) {// 蓝牙
+					
+				// }
+				SetScreen(connect_type);
+			}
+			break;
+		default:
+			break;
+		}
+
+	}
+	if (screen_id == 0x0001) // 自由振荡
+			{
+		switch (control_id) {
+		case 0x03: // 测量
+			if (state == 0x01) {
+				measure_flag = 1;
+				// index_mode1 = 0;
+			} else {
+				measure_flag = 0;
+				// index_mode1 = 0;
+			}
+			break;
+		case 0x04: // 清空
+			if (state == 0x01) {
+				index_mode1 = 0;
+				memset(free_record_buf, 0, sizeof(free_record_buf));
+				Record_Clear(1, 1);
+			}
+			break;
+
+		case 0x05: // 上传
+			if (state == 0x01) {
+				// if (index_mode1 == 0) return; // 无数据时不发送
+				current_screen = 0x0001;
+
+				if (index_mode1 > 200)
+					return; // 防止越界, wifi传输最大数据量为200字节, 18字节为wifi标志, 100字节为数据, 18字节为count
+				if(connect_type == 0x04)// wifi上传
+				{
+				check_wifi_connect_state();// 检查wifi连接状态
+				HAL_Delay(100);
+				// 8(device_id) + 1(cmd) + 1(count) + index_mode1*8(数据)+ 1(wifi标志)
+				uint8_t ack_data[8 + 1 + 1 + index_mode1 * 8 + 1];
+
+				memcpy(ack_data, device_id, sizeof(device_id)); // [0~7] device_id
+				ack_data[8] = 0x59;                               // [8]   cmd  自由振荡测量
+				ack_data[9] = index_mode1;                 // [9]   count（含+1偏移）
+
+				uint8_t *ptr = ack_data + 10;
+				for (int i = 0; i < index_mode1; i++) {
+					memcpy(ptr, (uint8_t*) &free_record_buf[i].amplitude,
+							sizeof(float));
+					ptr += sizeof(float);
+					memcpy(ptr, (uint8_t*) &free_record_buf[i].period,
+							sizeof(float));
+					ptr += sizeof(float);
+				}
+
+				ack_data[sizeof(ack_data) - 1] = 0x13;           // wifi传输标志
+
+				ESP32_ack_data(ack_data, sizeof(ack_data));
+				}else if(connect_type == 0x07)// 蓝牙上传
+				{
+					ble_transfer_cancel = 1;
+					BleUpload_Start(BLE_MODE_FREE);    // 自由振荡
+				}
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x02) // 阻尼振荡
+			{
+		switch (control_id) {
+		case 0x04: // 测量
+			if (state == 0x01) {
+				measure_flag = 2;
+				// index_mode2 = 0;
+			} else {
+				measure_flag = 0;
+				// index_mode2 = 0;
+			}
+			break;
+		case 0x03: // 清空
+			if (state == 0x01) {
+				index_mode2 = 0;
+				memset(damped_record_buf, 0, sizeof(damped_record_buf));
+				Record_Clear(2, 1);
+			}
+			break;
+
+		case 0x05: // 上传
+			if (state == 0x01) {
+				if (index_mode2 > 200)
+					return; // 防止越界, wifi传输最大数据量为200字节, 18字节为wifi标志, 100字节为数据, 18字节为count
+				current_screen = 0x0002;
+
+				if(connect_type == 0x04)// wifi上传
+				{
+				check_wifi_connect_state();// 检查wifi连接状态
+				HAL_Delay(100);
+				// 按阻尼档位筛选
+				uint8_t count1 = 0, count2 = 0, count3 = 0;
+				for (int i = 0; i < index_mode2; i++) {
+					switch (damped_record_buf[i].damping) {
+						case 1: count1++; break;
+						case 2: count2++; break;
+						case 3: count3++; break;
+						default: break; // 非1/2/3档位，过滤掉
+					}
+				}
+
+				// 8(device_id) + 1(cmd) + 1(阻尼1count) + 1(阻尼2count) + 1(阻尼3count) + count1*8 + count2*8 + count3*8 + 1(wifi标志)
+				uint8_t ack_data[8 + 1 + 1 + 1 + 1 + count1 * 8 + count2 * 8 + count3 * 8 + 1];
+
+				memcpy(ack_data, device_id, sizeof(device_id)); // [0~7] device_id
+				ack_data[8]  = 0x5A;   // [8]  cmd 阻尼振荡测量
+				ack_data[9]  = count1; // [9]  阻尼1 count
+				ack_data[10] = count2; // [10] 阻尼2 count
+				ack_data[11] = count3; // [11] 阻尼3 count
+
+				uint8_t *ptr = ack_data + 12;
+
+				// 分三轮按档位写入数据
+				for (uint8_t damping_level = 1; damping_level <= 3; damping_level++) {
+					for (int i = 0; i < index_mode2; i++) {
+						if (damped_record_buf[i].damping != damping_level) continue;
+
+						memcpy(ptr, (uint8_t*) &damped_record_buf[i].amplitude, sizeof(float));
+						ptr += sizeof(float);
+						memcpy(ptr, (uint8_t*) &damped_record_buf[i].period, sizeof(float));
+						ptr += sizeof(float);
+					}
+				}
+
+				ack_data[sizeof(ack_data) - 1] = 0x13; // wifi传输标志
+
+				ESP32_ack_data(ack_data, sizeof(ack_data));
+				}else if(connect_type == 0x07)// 蓝牙上传
+				{
+					ble_transfer_cancel = 1;
+					BleUpload_Start(BLE_MODE_DAMPED);    // 阻尼振荡
+				}
+			}
+			break;
+		case 0x06:// 跳转受迫振荡
+		{
+			if(state == 0x01)
+			{
+				page_flag = 3;
+				Sensor_Control_Start_Mode1();
+				// 切换继电器位置：恒流源
+				HAL_UART_Transmit(&huart4, current_msg, 6, 100);
+			}
+		}
+
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x03) // 受迫振荡
+			{
+		switch (control_id) {
+		case 0x01: // 开关
+			if (state == 0x01) {
+				Sensor_Control_Start_Mode2();
+				HAL_UART_Transmit(&huart4, motor_open_msg, 6, 100);
+			} else if (state == 0x00) {
+				Sensor_Control_Start_Mode1();
+				HAL_UART_Transmit(&huart4, motor_close_msg, 6, 100);
+			}
+			break;
+		case 0x02:// 返回
+			if(state == 0x01)
+			{
+				// 关闭电机
+				SetButtonValue(3, 1, 0);
+				HAL_UART_Transmit(&huart4, motor_close_msg, 6, 100);
+			}
+			break;
+		case 0x03: // 速度+
+			if (state == 0x01) {
+				if (motor_cycle < 2.0f) {
+					motor_cycle += step_table[step_index];
+				} else {
+					motor_cycle = 2.0f;
+				}
+				uint8_t int_part = (uint8_t) motor_cycle;             // 整数秒
+				uint16_t ms_part = (uint16_t) ((motor_cycle - int_part) * 1000
+						+ 0.5f); // 小数转毫秒，四舍五入
+
+				motor_cycle_msg[2] = int_part;
+				motor_cycle_msg[3] = (uint8_t) (ms_part >> 8);   // 毫秒高字节
+				motor_cycle_msg[4] = (uint8_t) (ms_part & 0xFF); // 毫秒低字节
+
+				HAL_UART_Transmit(&huart4, motor_cycle_msg, 6, 100);
+			}
+			break;
+		case 0x05: // 速度-
+			if (state == 0x01) {
+				if (motor_cycle > 1.0f) {
+					motor_cycle -= step_table[step_index];
+				} else {
+					motor_cycle = 1.0f;
+				}
+				uint8_t int_part = (uint8_t) motor_cycle;             // 整数秒
+				uint16_t ms_part = (uint16_t) ((motor_cycle - int_part) * 1000
+						+ 0.5f); // 小数转毫秒，四舍五入
+
+				motor_cycle_msg[2] = int_part;
+				motor_cycle_msg[3] = (uint8_t) (ms_part >> 8);   // 毫秒高字节
+				motor_cycle_msg[4] = (uint8_t) (ms_part & 0xFF); // 毫秒低字节
+
+				HAL_UART_Transmit(&huart4, motor_cycle_msg, 6, 100);
+			}
+			break;
+		case 0x04: // 步进+
+			if (state == 0x01) {
+				step_index = (step_index + 1) % 3;
+			}
+			break;
+		case 0x06: // 步进-
+			if (state == 0x01) {
+				step_index = (step_index + 2) % 3;  // 等价于 -1 循环
+			}
+			break;
+		case 0x07:  // 保存
+			if (state == 0x01) {
+				if (index_mode3 >= 199) {
+					return;
+				}
+				snprintf((char*) output_str, sizeof(output_str),
+						"%u;%.1f;%.4f;%.4f;%.1f;%.1f", index_mode3, amplitude,
+						motor_cycle, period, phase_diff1, phase_diff2);
+				Record_Add(5, 1, output_str);
+				SetTextInt32(3, 0x0A, index_mode3 + 1, 0, 1);
+				forced_record_buf[index_mode3].index = index_mode3;
+				forced_record_buf[index_mode3].amplitude = amplitude;
+				forced_record_buf[index_mode3].period = period;
+				forced_record_buf[index_mode3].drive_period = motor_cycle;
+				forced_record_buf[index_mode3].damping = damping_num;
+				forced_record_buf[index_mode3].phase_diff1 = phase_diff1;
+				forced_record_buf[index_mode3].phase_diff2 = phase_diff2;
+				index_mode3++;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x04) //wifi设置页
+			{
+		switch (control_id) {
+		case 0x02: // wifi开关
+			if (state == 0x01) {
+				stm32_to_esp32_data(wifi_state, (uint8_t*) &wifi_state_t[1], 1,
+						esp32_stm32);
+			} else {
+				stm32_to_esp32_data(wifi_state, (uint8_t*) &wifi_state_t[0], 1,
+						esp32_stm32);
+			}
+			break;
+//		case 0x07: // 协议类型
+//			if (state == 0x01) { //TCP
+//				stm32_to_esp32_data(wifi_protocol, (uint8_t*) &protocol_type[1],
+//						1, esp32_stm32);
+//			} else { //UDP
+//				stm32_to_esp32_data(wifi_protocol, (uint8_t*) &protocol_type[0],
+//						1, esp32_stm32);
+//			}
+//			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x0005) // 受迫表格页面
+			{
+		switch (control_id) {
+			case 0x02: // 删除选中行
+				if (state == 0x01) {
+					if (index_mode3 == 0 || line_flag > index_mode3 || line_flag < 0) {
+						line_flag = -1;
+						return;
+					}
+					Record_Delete(5, 1, line_flag);
+
+					// 将删除行之后的数据前移一位
+					for (uint8_t i = line_flag; i < index_mode3 - 1; i++) {
+						forced_record_buf[i] = forced_record_buf[i + 1];
+						forced_record_buf[i].index = i; // 更新索引
+					}
+					// 清空末尾多余的一条
+					memset(&forced_record_buf[index_mode3 - 1], 0, sizeof(Record_t));
+					line_flag = -1;
+					index_mode3--;
+
+					// 清空表格，重新填充
+					Record_Clear(5, 1);
+					for (uint8_t i = 0; i < index_mode3; i++) {
+						snprintf((char *)output_str, sizeof(output_str),
+								"%lu;%.1f;%.4f;%.4f;%.1f;%.1f",
+								forced_record_buf[i].index,
+								forced_record_buf[i].amplitude,
+								forced_record_buf[i].drive_period,
+								forced_record_buf[i].period,
+								forced_record_buf[i].phase_diff1,
+								forced_record_buf[i].phase_diff2);
+						Record_Add(5, 1, output_str);
+					}
+
+					SetTextInt32(3, 0x0A, index_mode3, 0, 1);
+				}
+    break;
+		case 0x03: // 清空
+			if (state == 0x01) {
+				line_flag = -1;
+				index_mode3 = 0;
+				index_filtered = 0;
+        		memset(forced_record_buf, 0, sizeof(forced_record_buf));
+        		memset(filtered_record_buf, 0, sizeof(filtered_record_buf));
+				Record_Clear(5, 1);
+				SetTextInt32(3, 0x0A, 0, 0, 1);
+			}
+			break;
+		case 0x04: // 上传
+			if (state == 0x01) {
+				if (index_mode3 > 100)
+					return; // 防止越界
+				current_screen = 0x0005;
+
+				if(connect_type == 0x04) // wifi上传
+				{
+				check_wifi_connect_state();// 检查wifi连接状态
+				HAL_Delay(100);
+				// 8(device_id) + 1(cmd) + 1(count) + 1(0x00) + index_mode3*6*4(数据)+ 1(wifi传输标志)
+				uint8_t ack_data[8 + 1 + 1 + index_mode3 * 6 * 4 + 1 + 1];
+
+				memcpy(ack_data, device_id, sizeof(device_id)); // [0~7] device_id
+				ack_data[8] = 0x51;                              // [8]   cmd 受迫表格
+				ack_data[9] = index_mode3;                       // [9]   count
+				ack_data[10] = 0x00;                            // [10]  0x00
+				uint8_t *ptr = ack_data + 11;
+				for (int i = 0; i < index_mode3; i++) {
+					float period_x10 = forced_record_buf[i].period * 10.0f; // 周期*10，临时变量
+					memcpy(ptr, (uint8_t*) &period_x10, sizeof(float));
+					ptr += sizeof(float);
+
+					memcpy(ptr, (uint8_t*) &forced_record_buf[i].period, sizeof(float));       // 周期
+					ptr += sizeof(float);
+
+					memcpy(ptr, (uint8_t*) &forced_record_buf[i].drive_period, sizeof(float)); // 驱动周期
+					ptr += sizeof(float);
+
+					memcpy(ptr, (uint8_t*) &forced_record_buf[i].amplitude, sizeof(float));    // 振幅
+					ptr += sizeof(float);
+
+					memcpy(ptr, (uint8_t*) &forced_record_buf[i].phase_diff1, sizeof(float));  // 相位差1
+					ptr += sizeof(float);
+
+					memcpy(ptr, (uint8_t*) &forced_record_buf[i].phase_diff2, sizeof(float));  // 相位差2
+					ptr += sizeof(float);
+				}
+	
+				ack_data[sizeof(ack_data) - 1] = 0x13; // wifi传输标志
+				ESP32_ack_data(ack_data, sizeof(ack_data));
+				}else if(connect_type == 0x07) // 蓝牙上传
+				{
+					ble_transfer_cancel = 1;
+					BleUpload_Start(BLE_MODE_FORCED);    // 受迫振荡
+				}
+			}
+			break;
+		default:
+			break;
+		}
+
+	}
+	if (screen_id == 0x06) // 参数设置页面
+			{
+		switch (control_id) {
+		case 0x01: // wifi开关
+			if (state == 0x01) { //开启
+				SetButtonValue(6, 2, 0);
+				SetButtonValue(7, 1, 0);
+				AnimationPlayFrame(0, 0x07, 0);
+				AnimationPlayFrame(1, 0x08, 0);
+				AnimationPlayFrame(2, 0x0C, 0);
+				AnimationPlayFrame(5, 0x08, 0);
+				// 设置连接方式为wifi
+				connect_type = 0x04;
+				sfud_erase_write(g_flash, FLASH_CONNECT_ADDR,sizeof(connect_type), &connect_type);
+			} else if (state == 0x00) {
+				SetButtonValue(6, 1, 1);
+			}
+			break;
+		case 0x02: //蓝牙开关
+			if (state == 0x01) { //开启
+				SetButtonValue(6, 1, 0);
+				SetButtonValue(4, 2, 0);
+				AnimationPlayFrame(0, 0x07, 2);
+				AnimationPlayFrame(1, 0x08, 1);
+				AnimationPlayFrame(2, 0x0C, 1);
+				AnimationPlayFrame(5, 0x08, 1);
+				// 设置连接方式为蓝牙
+				connect_type = 0x07;
+				sfud_erase_write(g_flash, FLASH_CONNECT_ADDR,sizeof(connect_type), &connect_type);
+			} else if (state == 0x00) {
+				SetButtonValue(6, 2, 1);
+			}
+			break;
+		case 0x07: // 阻尼1+
+			if (state == 0x02) {
+				damping1 = (damping1 + 10 > 350) ? 350 : damping1 + 10; // 长按步进10，防溢出
+			} else if (state == 0x01) {
+				if (damping1 < 350)
+					damping1++;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping1 > 350)
+					damping1 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING1_ADDR,
+						sizeof(damping1), (uint8_t*) &damping1);
+			}
+			break;
+
+		case 0x06: // 阻尼1-
+			if (state == 0x02) {
+				damping1 = (damping1 < 10) ? 0 : damping1 - 10;    // 长按步进10，防下溢
+			} else if (state == 0x01) {
+				if (damping1 > 0)
+					damping1--;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping1 > 350)
+					damping1 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING1_ADDR,
+						sizeof(damping1), (uint8_t*) &damping1);
+			}
+			break;
+		case 0x09: // 阻尼2+
+			if (state == 0x02) {
+				damping2 = (damping2 + 10 > 350) ? 350 : damping2 + 10; // 长按步进10，防溢出
+			} else if (state == 0x01) {
+				if (damping2 < 350)
+					damping2++;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping2 > 350)
+					damping2 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING2_ADDR,
+						sizeof(damping2), (uint8_t*) &damping2);
+			}
+			break;
+		case 0x08: // 阻尼2-
+			if (state == 0x02) {
+				damping2 = (damping2 < 10) ? 0 : damping2 - 10;    // 长按步进10，防下溢
+			} else if (state == 0x01) {
+				if (damping2 > 0)
+					damping2--;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping2 > 350)
+					damping2 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING2_ADDR,
+						sizeof(damping2), (uint8_t*) &damping2);
+			}
+			break;
+		case 0x0B: // 阻尼3+
+			if (state == 0x02) {
+				damping3 = (damping3 + 10 > 350) ? 350 : damping3 + 10; // 长按步进10，防溢出
+			} else if (state == 0x01) {
+				if (damping3 < 350)
+					damping3++;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping3 > 350)
+					damping3 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING3_ADDR,
+						sizeof(damping3), (uint8_t*) &damping3);
+			}
+			break;
+
+			break;
+		case 0x0A: // 阻尼3-
+			if (state == 0x02) {
+				damping3 = (damping3 < 10) ? 0 : damping3 - 10;    // 长按步进10，防下溢
+			} else if (state == 0x01) {
+				if (damping3 > 0)
+					damping3--;
+			} else if (state == 0x00) { // 松开时写入 Flash
+				if (damping3 > 350)
+					damping3 = 350;
+				sfud_erase_write(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING3_ADDR,
+						sizeof(damping3), (uint8_t*) &damping3);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x07) //蓝牙设置页
+			{
+		switch (control_id) {
+		case 0x01: // 蓝牙开关
+			if (state == 0x01) {
+				stm32_to_esp32_data(ble_state, (uint8_t*) &ble_state_t[1], 1,
+						esp32_stm32);
+			} else {
+				stm32_to_esp32_data(ble_state, (uint8_t*) &ble_state_t[0], 1,
+						esp32_stm32);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if(screen_id == 0x0008)// wifi通讯失败
+	{
+		switch (control_id) {
+		case 0x02: // 确认
+			if (state == 0x01) {
+				SetScreen(current_screen);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x0009) // 蓝牙传输中页面
+	{
+		switch (control_id) {
+		case 0x02: // 取消传输
+			if (state == 0x01) {
+				ble_transfer_cancel = 0;
+				SetScreen(current_screen);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+// 文本输入
+void NotifyText(uint16_t screen_id, uint16_t control_id, const char *str) {
+	if (screen_id == 0x0000) // 首页
+			{
+		switch (control_id) {
+		case 0x06: // 设备编号
+			if (str == NULL) {
+				break;
+			}
+
+			size_t len = strlen(str);
+			if (len > 8) {
+				// 长度不符合要求，拒绝保存，可按需添加错误提示
+				break;
+			}
+
+			memset(device_id, 0, sizeof(device_id));
+			memcpy(device_id, str, len);
+			break;
+		default:
+			break;
+		}
+		return;
+	}
+	if (screen_id == 0x0004) // wifi设置页
+	{
+		switch (control_id) {
+		case 0x03: // sid
+			memset(wlan_sid, 0, sizeof(wlan_sid));
+			memcpy(wlan_sid, str, strlen(str));
+			stm32_to_esp32_data(wifi_sid_set, wlan_sid, strlen(str),
+					esp32_stm32);
+			break;
+		case 0x04: // password
+			memset(wlan_password, 0, sizeof(wlan_password));
+			memcpy(wlan_password, str, strlen(str));
+			stm32_to_esp32_data(wifi_password_set, wlan_password, strlen(str),
+					esp32_stm32);
+			break;
+		case 0x05: // service IP
+			memset(wlan_service_IP, 0, sizeof(wlan_service_IP));
+			memcpy(wlan_service_IP, str, strlen(str));
+			stm32_to_esp32_data(wifi_service_IP_set, wlan_service_IP,
+					strlen(str), esp32_stm32);
+			break;
+		case 0x06: // service port
+			memset(wlan_service_port, 0, sizeof(wlan_service_port));
+			memcpy(wlan_service_port, str, strlen(str));
+			stm32_to_esp32_data(wifi_service_port_set, wlan_service_port,
+					strlen(str), esp32_stm32);
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x0007) //蓝牙设置页
+	{
+		switch (control_id) {
+		case 0x03: // 名称
+			memset(ble_name, 0, sizeof(ble_name));
+			memcpy(ble_name, str, strlen(str));
+			stm32_to_esp32_data(ble_name_set, ble_name, strlen(str),
+					esp32_stm32);
+			break;
+		case 0x04: // MAC
+			memset(ble_mac, 0, sizeof(ble_mac));
+			memcpy(ble_mac, str, strlen(str));
+			stm32_to_esp32_data(ble_mac_set, ble_mac, strlen(str),
+					esp32_stm32);
+			break;
+		case 0x05: // 配对码
+			memset(ble_paring, 0, sizeof(ble_paring));
+			memcpy(ble_paring, str, strlen(str));
+			stm32_to_esp32_data(ble_paring_set, ble_paring, strlen(str),
+					esp32_stm32);
+			break;
+		default:
+			break;
+		}
+	}
+
+}
+
+/*!
+ *  \brief  进度条控件通知
+ *  \details  通过GetControlValue时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param value 值
+ */
+void NotifyProgress(uint16_t screen_id, uint16_t control_id, uint32_t value) {
+}
+
+/*!
+ *  \brief  滑块控件通知
+ *  \details  获取滑块位置变化(通过GetControlValue)时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param value 值
+ */
+void NotifySlider(uint16_t screen_id, uint16_t control_id, uint32_t value) {
+}
+
+/*!
+ *  \brief  仪表控件通知
+ *  \details  通过GetControlValue时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param value 值
+ */
+void NotifyMeter(uint16_t screen_id, uint16_t control_id, uint32_t value) {
+}
+
+/*!
+ *  \brief  菜单控件通知
+ *  \details  当菜单项被按下或释放时执行此函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param item 菜单项索引
+ *  \param state 按钮状态，0释放1按下
+ */
+
+void NotifyMenu(uint16_t screen_id, uint16_t control_id, uint8_t item,
+		uint8_t state) {
+	if (screen_id == 0x0002) {
+		switch (control_id) {
+		case 0x07: // 阻尼档位选择
+			damping_num = item + 1;
+			SendDampingCoefficient(damping_num);
+			SetTextInt32(3, 8, damping_num, 0, 1);
+			break;
+		}
+	}
+	if (screen_id == 0x0005) {// 受控表格页面-筛选
+		switch (control_id) {
+			case 0x09: // 阻尼档位选择
+				{
+					uint8_t target_damping = 0;
+					if (item == 0) {
+						target_damping = 1; // 阻尼1
+					} else if (item == 1) {
+						target_damping = 2; // 阻尼2
+					} else if (item == 2) {
+						target_damping = 3; // 阻尼3
+					}
+
+					// 筛选
+					index_filtered = 0;
+					for (uint32_t i = 0; i < index_mode3; i++) {
+						if (forced_record_buf[i].damping == target_damping) {
+							filtered_record_buf[index_filtered] = forced_record_buf[i];
+							// filtered_record_buf[index_filtered].index = index_filtered; // 重新编号
+							index_filtered++;
+						}
+					}
+
+					// 清空表格，重新填充筛选结果
+					Record_Clear(5, 1);
+					for (uint32_t i = 0; i < index_filtered; i++) {
+						snprintf((char *)output_str, sizeof(output_str),
+								"%lu;%.1f;%.4f;%.4f;%.1f;%.1f",
+								filtered_record_buf[i].index,
+								filtered_record_buf[i].amplitude,
+								filtered_record_buf[i].drive_period,
+								filtered_record_buf[i].period,
+								filtered_record_buf[i].phase_diff1,
+								filtered_record_buf[i].phase_diff2);
+						Record_Add(5, 1, output_str);
+					}
+
+					// SetTextInt32(3, 0x0A, index_filtered, 0, 1);
+				}
+				break;
+		}
+	}
+}
+
+/*!
+ *  \brief  选择器控件通知
+ *  \details  当选择器控件值被写入时触发
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param item 当前选择项
+ */
+void NotifySelector(uint16_t screen_id, uint16_t control_id, uint8_t item) {
+}
+
+/*!
+ *  \brief  记录按钮点击通知
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ *  \param line 选中行
+ */
+void NotifyRecord(uint16_t screen_id, uint16_t control_id, uint8_t line) {
+	if (screen_id == 0x0005 && control_id == 0x01) { // 受迫振荡表格
+		line_flag = line;
+	}
+}
+
+/*!
+ *  \brief  实时时间控件时间通知函数
+ *  \param screen_id 屏幕ID
+ *  \param control_id 控件ID
+ */
+void NotifyTimer(uint16_t screen_id, uint16_t control_id) {
+}
+
+/*!
+ *  \brief  获取内部FLASH状态回调
+ *  \param status 0失败，1成功
+ *  \param _data 数据指针
+ *  \param length 数据长度
+ */
+void NotifyReadFlash(uint8_t status, uint8_t *_data, uint16_t length) {
+}
+
+/*!
+ *  \brief  写内部FLASH状态回调
+ *  \param status 0失败，1成功
+ */
+void NotifyWriteFlash(uint8_t status) {
+}
+
+/*!
+ *  \brief  获取RTC时间，注意返回的是BCD码
+ *  \param year 年（BCD码）
+ *  \param month 月（BCD码）
+ *  \param week 星期（BCD码）
+ *  \param day 日（BCD码）
+ *  \param hour 时（BCD码）
+ *  \param minute 分（BCD码）
+ *  \param second 秒（BCD码）
+ */
+void NotifyReadRTC(uint8_t year, uint8_t month, uint8_t week, uint8_t day,
+		uint8_t hour, uint8_t minute, uint8_t second) {
+}
+
+/*!
+ *  \brief  触摸屏任务回调
+ *  \param status 0失败，1成功
+ */
+qsize size = 0;
+uint8_t cmd_buffer[CMD_MAX_SIZE];
+void touch_hmi_task_callback(void) {
+	size = queue_find_cmd(cmd_buffer, CMD_MAX_SIZE);
+	if (size > 0 && cmd_buffer[1] != 0x07) //串口屏指令处
+			{
+		ProcessMessage((PCTRL_MSG) cmd_buffer, size);
+	}
+	if (hmi_updata_flag) {
+		hmi_updata_flag = 0;
+		UpdateUI();
+	}
+}
+
+/*!
+ *  \brief  获取flash数据
+ */
+void GetFlashData(void) {
+	sfud_read(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING1_ADDR, 2,
+			(uint8_t*) &damping1);
+	sfud_read(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING2_ADDR, 2,
+			(uint8_t*) &damping2);
+	sfud_read(g_flash, FLASH_SAVE_ADDR + FLASH_DAMPING3_ADDR, 2,
+			(uint8_t*) &damping3);
+	// 读取连接方式
+	sfud_read(g_flash, FLASH_CONNECT_ADDR, sizeof(connect_type),
+			&connect_type);
+	if (connect_type == 0x04) {
+		SetButtonValue(6, 1, 1);
+		AnimationPlayFrame(0, 0x07, 0);
+		AnimationPlayFrame(1, 0x08, 0);
+		AnimationPlayFrame(2, 0x0C, 0);
+		AnimationPlayFrame(5, 0x08, 0);
+	} else if (connect_type == 0x07) {
+		SetButtonValue(6, 2, 1);
+		AnimationPlayFrame(0, 0x07, 2);
+		AnimationPlayFrame(1, 0x08, 1);
+		AnimationPlayFrame(2, 0x0C, 1);
+		AnimationPlayFrame(5, 0x08, 1);
+	}
+}
+
+
+/*
+ * brief  根据阻尼档发送对应系数
+ *  \param item 阻尼档位
+*/
+void SendDampingCoefficient(uint8_t item) {
+	 if (item == 1) {
+		target_current_msg[2] = (uint8_t) (damping1 >> 8);
+		target_current_msg[3] = (uint8_t) (damping1 & 0xFF);
+		HAL_UART_Transmit(&huart4, target_current_msg, 6, 100);
+		return;
+	} else if (item == 2) {
+		target_current_msg[2] = (uint8_t) (damping2 >> 8);
+		target_current_msg[3] = (uint8_t) (damping2 & 0xFF);
+		HAL_UART_Transmit(&huart4, target_current_msg, 6, 100);
+		return;
+	} else if (item == 3) {
+		target_current_msg[2] = (uint8_t) (damping3 >> 8);
+		target_current_msg[3] = (uint8_t) (damping3 & 0xFF);
+		HAL_UART_Transmit(&huart4, target_current_msg, 6, 100);
+		return;
+	}
+}
+
+/*!
+ *  \brief  获取配置信息
+ */
+void GetConfigInfo(void) {
+	uint8_t config_info[1] = {0};
+	stm32_to_esp32_data(get_config_info, config_info, 1, esp32_stm32);
+}

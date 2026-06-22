@@ -1,0 +1,7 @@
+../Core/Src/power_control.c:24:6:p_queue_reset	1
+../Core/Src/power_control.c:34:6:p_queue_push	2
+../Core/Src/power_control.c:45:13:p_queue_pop	2
+../Core/Src/power_control.c:55:16:p_queue_size	1
+../Core/Src/power_control.c:67:9:p_queue_find_cmd	6
+../Core/Src/power_control.c:102:6:power_data_deal	3
+../Core/Src/power_control.c:120:7:power_communication_task_callback	3

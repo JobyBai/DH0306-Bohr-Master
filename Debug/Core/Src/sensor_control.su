@@ -1,9 +1,0 @@
-../Core/Src/sensor_control.c:32:6:Sensor_Control_Init	8	static
-../Core/Src/sensor_control.c:39:6:Sensor_Control_Stop	8	static
-../Core/Src/sensor_control.c:46:6:Sensor_Control_Start_Mode1	8	static
-../Core/Src/sensor_control.c:54:6:Sensor_Control_Start_Mode2	8	static
-../Core/Src/sensor_control.c:66:24:get_dma_write_pos	4	static
-../Core/Src/sensor_control.c:77:13:fetch_frame	32	static
-../Core/Src/sensor_control.c:113:13:process_frame	48	static
-../Core/Src/sensor_control.c:217:6:Sensor_Init	8	static
-../Core/Src/sensor_control.c:222:6:Sensor_Poll	32	dynamic

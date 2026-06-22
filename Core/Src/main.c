@@ -109,12 +109,11 @@ int main(void)
   /* USER CODE BEGIN 2 */
 	// 初始化 SFUD 设备
 	printf("\r\n====== SFUD 初始化 ======\r\n");
-
 	/* -------- 第一步：初始化 -------- */
 	sfud_result = sfud_init();
 	if (sfud_result != SFUD_SUCCESS) {
 		printf("[FAIL] sfud_init 失败，错误码: %d\r\n", sfud_result);
-		printf("  → 检查 sfud_port.c 的 SPI 读写函数和 CS 引脚\r\n");
+		printf("  → 检查 sfud_port.c 的 SPI 读写函数和 CS 引脚1\r\n");
 		return;
 	}
 	printf("[PASS] sfud_init 成功\r\n");

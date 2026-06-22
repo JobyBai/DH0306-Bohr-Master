@@ -1,9 +1,0 @@
-../Core/Src/ble_table_upload.c:72:24:append_byte	1
-../Core/Src/ble_table_upload.c:81:24:append_str	1
-../Core/Src/ble_table_upload.c:92:16:sum_low_8bits	2
-../Core/Src/ble_table_upload.c:108:17:build_payload	4
-../Core/Src/ble_table_upload.c:200:17:build_frame	1
-../Core/Src/ble_table_upload.c:232:13:send_current_row	1
-../Core/Src/ble_table_upload.c:243:6:BleUpload_Start	2
-../Core/Src/ble_table_upload.c:262:6:BleUpload_OnAck	6
-../Core/Src/ble_table_upload.c:305:18:BleUpload_GetState	1

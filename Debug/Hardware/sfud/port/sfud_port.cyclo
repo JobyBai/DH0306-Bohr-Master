@@ -1,6 +1,0 @@
-../Hardware/sfud/port/sfud_port.c:41:17:spi_write_read	5
-../Hardware/sfud/port/sfud_port.c:73:17:qspi_read	1
-../Hardware/sfud/port/sfud_port.c:88:13:retry_delay_100us	1
-../Hardware/sfud/port/sfud_port.c:94:10:sfud_spi_port_init	2
-../Hardware/sfud/port/sfud_port.c:132:6:sfud_log_debug	1
-../Hardware/sfud/port/sfud_port.c:150:6:sfud_log_info	1

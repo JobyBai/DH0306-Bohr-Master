@@ -47,6 +47,7 @@ uint8_t target_current_msg[6] = { 0xAA, 0x6E, 0x00, 0x00, 0x00, 0x55 }; // 设�
 uint8_t motor_cycle_msg[6] = { 0xAA, 0x1D, 0x00, 0x00, 0x00, 0x55 }; // 设置电机周期
 uint8_t motor_open_msg[6] = { 0xAA, 0x14, 0x00, 0x00, 0x00, 0x55 }; // 电机开启
 uint8_t motor_close_msg[6] = { 0xAA, 0x15, 0x00, 0x00, 0x00, 0x55 }; // 电机关闭
+uint8_t jog_msg[6] = { 0xAA, 0x1A, 0x00, 0x00, 0x00, 0x55 }; // 点动
 
 // 阻尼1系数
 uint16_t damping1 = 1;
@@ -60,6 +61,8 @@ uint8_t damping_num = 1;
 uint8_t connect_type = 0x04;
 // 当前页面
 uint16_t current_screen = 0x0000;
+// 点动档位
+uint16_t jog_num = 1;
 
 // 步进系数
 const float step_table[] = { 0.001f, 0.01f, 0.1f, 1.0f };
@@ -492,6 +495,13 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 				index_mode3++;
 			}
 			break;
+		case 0x11: // 点动
+			if (state == 0x01) {
+				// 关闭电机
+				SetButtonValue(3, 1, 0);
+				HAL_UART_Transmit(&huart4, motor_close_msg, 6, 100);
+			}
+			break;
 		default:
 			break;
 		}
@@ -776,6 +786,46 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 			if (state == 0x01) {
 				ble_transfer_cancel = 0;
 				SetScreen(current_screen);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x000A) // 点动档位选择
+	{
+		switch (control_id) {
+		case 0x02: // jog_num-
+			if (state == 0x01) {
+				if(jog_num > 1){
+					jog_num--;
+				}
+				SetTextInt32(0x0A, 0x03, jog_num, 0, 1);
+			}
+			break;
+		case 0x04: // jog_num+
+			if (state == 0x01) {
+				if(jog_num < 5){
+					jog_num++;
+				}
+				SetTextInt32(0x0A, 0x03, jog_num, 0, 1);
+			}
+			break;
+		case 0x06: // 正向点动
+			if (state == 0x01) {
+				jog_msg[2] = 0x01;                        // 正向
+				jog_msg[3] = (jog_num >> 8) & 0xFF;       // jog_num 高字节
+				jog_msg[4] = jog_num & 0xFF;              // jog_num 低字节
+				HAL_UART_Transmit(&huart4, jog_msg, 6, 100);
+			}
+			break;
+
+		case 0x07: // 反向点动
+			if (state == 0x01) {
+				jog_msg[2] = 0x00;                        // 反向
+				jog_msg[3] = (jog_num >> 8) & 0xFF;
+				jog_msg[4] = jog_num & 0xFF;
+				HAL_UART_Transmit(&huart4, jog_msg, 6, 100);
 			}
 			break;
 		default:

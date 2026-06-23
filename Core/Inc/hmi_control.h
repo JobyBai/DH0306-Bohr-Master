@@ -51,6 +51,7 @@ extern uint8_t damping_num;
 
 extern uint8_t connect_type;// 连接方式 0x04: wifi 0x07: 蓝牙
 extern uint16_t current_screen;// 当前屏幕
+extern uint16_t jog_num;// 点动档位
 
 
 

@@ -16,9 +16,9 @@ float period = 0.0f;      // 周期
 float amplitude = 0.0f;   // 振幅
 float phase_diff1 = 0.0f; // 相位差1
 float phase_diff2 = 0.0f; // 相位差2
-uint16_t index_mode1 = 0;
-uint16_t index_mode2 = 0;
-uint16_t index_mode3 = 0;
+uint16_t index_mode1 = 1;
+uint16_t index_mode2 = 1;
+uint16_t index_mode3 = 1;
 uint8_t sensor_frame_len = 10; // 单帧总字节数
 uint8_t page_flag = 1;//当前页面标志位
 uint8_t measure_flag = 0; // 测量标志位 // 0:停止测量，1：自由振荡测量，2：阻尼振荡测量，3：受迫振荡测量
@@ -126,6 +126,7 @@ static void process_frame(const uint8_t *frame) {
         if (index_mode1 >= 200) {
           // 停止采集 or 标记完成
           measure_flag = 0;
+          SetButtonValue(1, 3, 0);//自动关闭测量按钮
           return;
         }
 
@@ -152,6 +153,7 @@ static void process_frame(const uint8_t *frame) {
         if (index_mode2 >= 200) {
           // 停止采集 or 标记完成
           measure_flag = 0;
+          SetButtonValue(2, 4, 0);//自动关闭测量按钮
           return;
         }
 

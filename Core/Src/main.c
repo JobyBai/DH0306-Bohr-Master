@@ -138,6 +138,8 @@ int main(void)
   Sensor_Control_Init();
   Sensor_Control_Start_Mode1();
   
+  //初始化电机周期
+  HAL_UART_Transmit(&huart4, motor_cycle_msg, 6, 100);
 
   // 获取配置信息
 //   GetConfigInfo();

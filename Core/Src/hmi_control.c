@@ -287,7 +287,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 				check_wifi_connect_state();// 检查wifi连接状态
 				HAL_Delay(100);
 				// 8(device_id) + 1(cmd) + 1(count) + index_mode1*8(数据)+ 1(wifi标志)
-				uint8_t ack_data[8 + 1 + 1 + index_mode1 * 8 + 1];
+				uint8_t ack_data[8 + 1 + 1 + (index_mode1-1) * 8 + 1];
 
 				memcpy(ack_data, device_id, sizeof(device_id)); // [0~7] device_id
 				ack_data[8] = 0x59;                               // [8]   cmd  自由振荡测量

@@ -291,10 +291,10 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 
 				memcpy(ack_data, device_id, sizeof(device_id)); // [0~7] device_id
 				ack_data[8] = 0x59;                               // [8]   cmd  自由振荡测量
-				ack_data[9] = index_mode1;                 // [9]   count（含+1偏移）
+				ack_data[9] = index_mode1-1;                 // [9]   count（含+1偏移）
 
 				uint8_t *ptr = ack_data + 10;
-				for (int i = 0; i < index_mode1; i++) {
+				for (int i = 0; i < index_mode1-1; i++) {
 					memcpy(ptr, (uint8_t*) &free_record_buf[i].amplitude,
 							sizeof(float));
 					ptr += sizeof(float);
@@ -353,7 +353,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 				HAL_Delay(100);
 				// 按阻尼档位筛选
 				uint8_t count1 = 0, count2 = 0, count3 = 0;
-				for (int i = 0; i < index_mode2; i++) {
+				for (int i = 0; i < index_mode2-1; i++) {
 					switch (damped_record_buf[i].damping) {
 						case 1: count1++; break;
 						case 2: count2++; break;
@@ -375,7 +375,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 
 				// 分三轮按档位写入数据
 				for (uint8_t damping_level = 1; damping_level <= 3; damping_level++) {
-					for (int i = 0; i < index_mode2; i++) {
+					for (int i = 0; i < index_mode2-1; i++) {
 						if (damped_record_buf[i].damping != damping_level) continue;
 
 						memcpy(ptr, (uint8_t*) &damped_record_buf[i].amplitude, sizeof(float));
@@ -848,6 +848,18 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 		case 0x05:// 关闭
 			if(state == 0x01)
 			{
+				SetScreen(current_screen);
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if (screen_id == 0x000B) // wifi上传成功页面
+	{
+		switch (control_id) {
+		case 0x02: // 确认
+			if (state == 0x01) {
 				SetScreen(current_screen);
 			}
 			break;

@@ -123,7 +123,7 @@ static void process_frame(const uint8_t *frame) {
 
       // 表格展示，并保存
       if (measure_flag == 1) {
-        if (index_mode1 >= 200) {
+        if (index_mode1 > 200) {
           // 停止采集 or 标记完成
           measure_flag = 0;
           SetButtonValue(1, 3, 0);//自动关闭测量按钮
@@ -133,13 +133,13 @@ static void process_frame(const uint8_t *frame) {
         snprintf((char *)output_str, sizeof(output_str), "%u;%.1f;%.4f",
                  index_mode1, amplitude, period);
         Record_Add(1, 1, output_str);
-        free_record_buf[index_mode1].index = index_mode1;
-        free_record_buf[index_mode1].amplitude = amplitude;
-        free_record_buf[index_mode1].period = period;
-        free_record_buf[index_mode1].drive_period = 0.0f;
-        free_record_buf[index_mode1].damping = 0; // 无阻尼振荡
-        free_record_buf[index_mode1].phase_diff1 = 0.0f;
-        free_record_buf[index_mode1].phase_diff2 = 0.0f;
+        free_record_buf[index_mode1-1].index = index_mode1;
+        free_record_buf[index_mode1-1].amplitude = amplitude;
+        free_record_buf[index_mode1-1].period = period;
+        free_record_buf[index_mode1-1].drive_period = 0.0f;
+        free_record_buf[index_mode1-1].damping = 0; // 无阻尼振荡
+        free_record_buf[index_mode1-1].phase_diff1 = 0.0f;
+        free_record_buf[index_mode1-1].phase_diff2 = 0.0f;
         biaoge_bottom(1,1,index_mode1);// 展示对应行数
         index_mode1++;
       }
@@ -150,7 +150,7 @@ static void process_frame(const uint8_t *frame) {
       SetTextFloat(0x02, 0x0A, amplitude, 1, 1);
       // 表格展示，并保存
       if (measure_flag == 2) {
-        if (index_mode2 >= 200) {
+        if (index_mode2 > 200) {
           // 停止采集 or 标记完成
           measure_flag = 0;
           SetButtonValue(2, 4, 0);//自动关闭测量按钮
@@ -160,13 +160,13 @@ static void process_frame(const uint8_t *frame) {
         snprintf((char *)output_str, sizeof(output_str), "%u;%.1f;%.4f",
                  index_mode2, amplitude, period);
         Record_Add(2, 1, output_str);
-        damped_record_buf[index_mode2].index = index_mode2;
-        damped_record_buf[index_mode2].amplitude = amplitude;
-        damped_record_buf[index_mode2].period = period;
-        damped_record_buf[index_mode2].drive_period = 0.0f;
-        damped_record_buf[index_mode2].damping = damping_num; // 阻尼档位
-        damped_record_buf[index_mode2].phase_diff1 = 0.0f;
-        damped_record_buf[index_mode2].phase_diff2 = 0.0f;
+        damped_record_buf[index_mode2-1].index = index_mode2;
+        damped_record_buf[index_mode2-1].amplitude = amplitude;
+        damped_record_buf[index_mode2-1].period = period;
+        damped_record_buf[index_mode2-1].drive_period = 0.0f;
+        damped_record_buf[index_mode2-1].damping = damping_num; // 阻尼档位
+        damped_record_buf[index_mode2-1].phase_diff1 = 0.0f;
+        damped_record_buf[index_mode2-1].phase_diff2 = 0.0f;
         biaoge_bottom(2,1,index_mode2);// 展示对应行数
         index_mode2++;
       }

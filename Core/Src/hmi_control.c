@@ -280,7 +280,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 				// if (index_mode1 == 0) return; // 无数据时不发送
 				current_screen = 0x0001;
 
-				if (index_mode1 > 200)
+				if (index_mode1 > 201)
 					return; // 防止越界, wifi传输最大数据量为200字节, 18字节为wifi标志, 100字节为数据, 18字节为count
 				if(connect_type == 0x04)// wifi上传
 				{
@@ -343,7 +343,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 
 		case 0x05: // 上传
 			if (state == 0x01) {
-				if (index_mode2 > 200)
+				if (index_mode2 > 101)
 					return; // 防止越界, wifi传输最大数据量为200字节, 18字节为wifi标志, 100字节为数据, 18字节为count
 				current_screen = 0x0002;
 
@@ -487,7 +487,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 			break;
 		case 0x07:  // 保存
 			if (state == 0x01) {
-				if (index_mode3 >= 200) {
+				if (index_mode3 > 80) {
 					return;
 				}
 				snprintf((char*) output_str, sizeof(output_str),
@@ -593,7 +593,7 @@ void NotifyButton(uint16_t screen_id, uint16_t control_id, uint8_t state) {
 		case 0x04:
 			if (state == 0x01) {
 				uint8_t count = index_mode3 - 1;  // 实际记录数
-				if (count > 100)
+				if (count > 81)
 					return;
 				current_screen = 0x0005;
 

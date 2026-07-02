@@ -150,7 +150,7 @@ static void process_frame(const uint8_t *frame) {
       SetTextFloat(0x02, 0x0A, amplitude, 1, 1);
       // 表格展示，并保存
       if (measure_flag == 2) {
-        if (index_mode2 > 200) {
+        if (index_mode2 > 100) {
           // 停止采集 or 标记完成
           measure_flag = 0;
           SetButtonValue(2, 4, 0);//自动关闭测量按钮
